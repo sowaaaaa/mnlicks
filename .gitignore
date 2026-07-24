@@ -4,3 +4,22 @@ __pycache__/
 *.pyc
 subscriptions.db
 .claude/
+
+# Python
+*.pyo
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
