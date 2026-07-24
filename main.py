@@ -177,6 +177,9 @@ MEMBERSHIP_SWEEP_DATE = datetime(2026, 8, 31)
 async def expiry_checker(bot):
     while True:
         for user_id, _ in db.get_expired(datetime.now()):
+            if user_id in ADMIN_IDS:
+                db.mark_status(user_id, 'expired')
+                continue
             try:
                 await bot.ban_chat_member(CHAT_ID, user_id)
                 await bot.unban_chat_member(CHAT_ID, user_id, only_if_banned=True)
@@ -193,7 +196,7 @@ async def expiry_checker(bot):
 
         if datetime.now() >= MEMBERSHIP_SWEEP_DATE:
             for user_id, _ in db.get_grandfather_members():
-                if not db.has_active_subscription(user_id):
+                if user_id not in ADMIN_IDS and not db.has_active_subscription(user_id):
                     try:
                         await bot.ban_chat_member(CHAT_ID, user_id)
                         await bot.unban_chat_member(CHAT_ID, user_id, only_if_banned=True)
