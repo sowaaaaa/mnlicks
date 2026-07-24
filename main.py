@@ -171,6 +171,9 @@ async def grant_access(bot, user_id: int, username: str | None, plan_key: str) -
     return invite.invite_link
 
 
+MEMBERSHIP_SWEEP_DATE = datetime(2026, 8, 31)
+
+
 async def expiry_checker(bot):
     while True:
         for user_id, _ in db.get_expired(datetime.now()):
@@ -187,6 +190,24 @@ async def expiry_checker(bot):
             except TelegramAPIError:
                 pass
             db.mark_status(user_id, 'expired')
+
+        if datetime.now() >= MEMBERSHIP_SWEEP_DATE:
+            for user_id, _ in db.get_grandfather_members():
+                if not db.has_active_subscription(user_id):
+                    try:
+                        await bot.ban_chat_member(CHAT_ID, user_id)
+                        await bot.unban_chat_member(CHAT_ID, user_id, only_if_banned=True)
+                        await bot.send_message(
+                            user_id,
+                            '<tg-emoji emoji-id="5278578973595427038">🚫</tg-emoji> У вас нет активной подписки на '
+                            '<i>MnlicksGang | TRADE</i>, <b>доступ закрыт.</b>\n\nОформить:',
+                            parse_mode='HTML',
+                            reply_markup=plans_inline,
+                        )
+                    except TelegramAPIError:
+                        pass
+                db.remove_grandfather_member(user_id)
+
         await asyncio.sleep(3600)
 
 
@@ -307,6 +328,39 @@ async def grant_handler(message: Message):
     link = await grant_access(message.bot, user_id, None, plan_key)
     await message.bot.send_message(user_id, access_granted_text(plan_key, link), parse_mode='HTML')
     await message.answer(f'Доступ выдан пользователю {user_id}.')
+
+
+@dp.message(Command('addmembers'))
+async def addmembers_handler(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) != 2:
+        await message.answer(
+            'Использование: /addmembers <id или @username, через пробел или с новой строки>\n\n'
+            f'Эти пользователи будут проверены на активную подписку '
+            f'{MEMBERSHIP_SWEEP_DATE.strftime("%d.%m.%Y")} — у кого её нет, будут исключены из чата.'
+        )
+        return
+    tokens = parts[1].split()
+    added: list[str] = []
+    failed: list[str] = []
+    for token in tokens:
+        handle = token.strip().lstrip('@')
+        if handle.isdigit():
+            db.add_grandfather_members([(int(handle), None)])
+            added.append(handle)
+            continue
+        try:
+            chat = await message.bot.get_chat(f'@{handle}')
+            db.add_grandfather_members([(chat.id, handle)])
+            added.append(handle)
+        except TelegramAPIError:
+            failed.append(handle)
+    reply = f'Добавлено в список на проверку: {len(added)}'
+    if failed:
+        reply += f'\nНе удалось найти: {", ".join(failed)}'
+    await message.answer(reply)
 
 
 @dp.message(Command('setwelcome'))

@@ -23,6 +23,12 @@ def _connect():
             value TEXT
         )
     ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS grandfather_members (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT
+        )
+    ''')
     return conn
 
 
@@ -73,4 +79,38 @@ def set_setting(key: str, value: str):
             INSERT INTO settings (key, value) VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
         ''', (key, value))
+    conn.close()
+
+
+def has_active_subscription(user_id: int) -> bool:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT 1 FROM subscriptions WHERE user_id = ? AND status = 'active'",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def add_grandfather_members(entries: list[tuple[int, str | None]]):
+    conn = _connect()
+    with conn:
+        conn.executemany(
+            'INSERT OR IGNORE INTO grandfather_members (user_id, username) VALUES (?, ?)',
+            entries,
+        )
+    conn.close()
+
+
+def get_grandfather_members() -> list[tuple[int, str | None]]:
+    conn = _connect()
+    rows = conn.execute('SELECT user_id, username FROM grandfather_members').fetchall()
+    conn.close()
+    return rows
+
+
+def remove_grandfather_member(user_id: int):
+    conn = _connect()
+    with conn:
+        conn.execute('DELETE FROM grandfather_members WHERE user_id = ?', (user_id,))
     conn.close()
