@@ -61,6 +61,13 @@ DEFAULT_HELLO_TEXT = '''<tg-emoji emoji-id="5242358694049496372">🤝</tg-emoji>
 def get_hello_text() -> str:
     return db.get_setting('hello_text', DEFAULT_HELLO_TEXT)
 
+
+DEFAULT_TARIFFS_TEXT = '📍Главное меню » Выбор тарифа\n\n🗂 Выберите тариф:'
+
+
+def get_tariffs_text() -> str:
+    return db.get_setting('tariffs_text', DEFAULT_TARIFFS_TEXT)
+
 hello_inline = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text='Вступить в MnlicksTrade', callback_data='join')],
     [InlineKeyboardButton(text='Отзывы', callback_data='feedbacks')],
@@ -180,7 +187,7 @@ async def callback_handler(callback: CallbackQuery):
 
     if data == 'join':
         await callback.message.answer(
-            '📍Главное меню » Выбор тарифа\n\n🗂 Выберите тариф:',
+            get_tariffs_text(),
             reply_markup=plans_inline,
         )
 
@@ -292,6 +299,23 @@ async def setwelcome_handler(message: Message):
         parse_mode='HTML',
         reply_markup=hello_inline,
     )
+
+
+@dp.message(Command('settariffs'))
+async def settariffs_handler(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) != 2:
+        await message.answer(
+            'Использование: /settariffs <текст>\n\n'
+            'Текст показывается на экране выбора тарифа (кнопка «Вступить в MnlicksTrade»).\n'
+            'Поддерживается HTML-разметка.'
+        )
+        return
+    db.set_setting('tariffs_text', parts[1])
+    await message.answer('Текст экрана тарифов обновлён. Вот как он теперь выглядит:')
+    await message.answer(get_tariffs_text(), parse_mode='HTML', reply_markup=plans_inline)
 
 
 async def main():
