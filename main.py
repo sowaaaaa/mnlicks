@@ -8,7 +8,7 @@ from urllib.parse import quote
 import db
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.enums import ContentType
+from aiogram.enums import ChatType, ContentType
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -447,6 +447,11 @@ async def sethellophoto_no_photo_handler(message: Message):
 @dp.message(F.chat.id == CHAT_ID)
 async def track_chat_activity(message: Message):
     track_potential_member(message.from_user)
+
+
+@dp.message(F.chat.type == ChatType.PRIVATE)
+async def unknown_private_message(message: Message):
+    await message.answer('Введите /start, чтобы открыть меню.')
 
 
 async def main():
