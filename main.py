@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -118,16 +119,33 @@ feedback_back_inline = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 
+def get_feedback_photo_sources() -> list:
+    cached_raw = db.get_setting('feedback_photo_ids')
+    if cached_raw:
+        cached = json.loads(cached_raw)
+        if len(cached) == len(FEEDBACK_PHOTOS):
+            return cached
+    return [FSInputFile(path) for path in FEEDBACK_PHOTOS]
+
+
 def feedback_rich_message() -> InputRichMessage:
     slides = [
-        InputRichBlockPhoto(photo=InputMediaPhoto(media=FSInputFile(path)))
-        for path in FEEDBACK_PHOTOS
+        InputRichBlockPhoto(photo=InputMediaPhoto(media=src))
+        for src in get_feedback_photo_sources()
     ]
     caption = RichBlockCaption(text=[
         RichTextCustomEmoji(custom_emoji_id='5424972470023104089', alternative_text='🔥'),
         ' Отзывы участников',
     ])
     return InputRichMessage(blocks=[InputRichBlockSlideshow(blocks=slides, caption=caption)])
+
+
+def cache_feedback_photo_ids(sent: Message):
+    if db.get_setting('feedback_photo_ids'):
+        return
+    slideshow = sent.rich_message.blocks[0]
+    ids = [block.photo[-1].file_id for block in slideshow.blocks]
+    db.set_setting('feedback_photo_ids', json.dumps(ids))
 
 
 def plan_expiry(plan_key: str) -> datetime:
@@ -245,10 +263,11 @@ async def callback_handler(callback: CallbackQuery):
         invoice.poll(message=callback.message)
 
     elif data == 'feedbacks':
-        await callback.message.answer_rich(
+        sent = await callback.message.answer_rich(
             rich_message=feedback_rich_message(),
             reply_markup=feedback_back_inline,
         )
+        cache_feedback_photo_ids(sent)
 
 
 @cp.invoice_paid()
