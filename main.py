@@ -337,10 +337,20 @@ async def grant_handler(message: Message):
 async def addmembers_handler(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target = message.reply_to_message.from_user
+        db.add_grandfather_members([(target.id, target.username)])
+        await message.answer(f'Добавлен на проверку: {target.username and "@" + target.username or target.id}')
+        return
+
     parts = message.text.split(maxsplit=1)
     if len(parts) != 2:
         await message.answer(
-            'Использование: /addmembers <id или @username, через пробел или с новой строки>\n\n'
+            'Использование:\n'
+            '• /addmembers <id или @username, через пробел или с новой строки>\n'
+            '• либо ответьте (reply) командой /addmembers на сообщение человека в чате — самый надёжный способ,\n'
+            '  так как бот не всегда может найти пользователя по @username, если тот раньше не писал боту напрямую.\n\n'
             f'Эти пользователи будут проверены на активную подписку '
             f'{MEMBERSHIP_SWEEP_DATE.strftime("%d.%m.%Y")} — у кого её нет, будут исключены из чата.'
         )
@@ -362,7 +372,10 @@ async def addmembers_handler(message: Message):
             failed.append(handle)
     reply = f'Добавлено в список на проверку: {len(added)}'
     if failed:
-        reply += f'\nНе удалось найти: {", ".join(failed)}'
+        reply += (
+            f'\nНе удалось найти: {", ".join(failed)}\n'
+            'Для них: ответьте (reply) на сообщение этого человека в чате командой /addmembers.'
+        )
     await message.answer(reply)
 
 
@@ -423,6 +436,13 @@ async def sethellophoto_no_photo_handler(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
     await message.answer('Использование: отправьте фото с подписью /sethellophoto')
+
+
+@dp.message(F.chat.id == CHAT_ID)
+async def track_chat_activity(message: Message):
+    user = message.from_user
+    if user and user.id not in ADMIN_IDS and not db.has_active_subscription(user.id):
+        db.add_grandfather_members([(user.id, user.username)])
 
 
 async def main():
