@@ -62,6 +62,11 @@ def get_hello_text() -> str:
     return db.get_setting('hello_text', DEFAULT_HELLO_TEXT)
 
 
+def get_hello_photo() -> str | FSInputFile:
+    photo_id = db.get_setting('hello_photo_id')
+    return photo_id if photo_id else FSInputFile(HELLO_PHOTO)
+
+
 DEFAULT_TARIFFS_TEXT = '📍Главное меню » Выбор тарифа\n\n🗂 Выберите тариф:'
 
 
@@ -165,7 +170,7 @@ async def expiry_checker(bot):
 @dp.message(CommandStart())
 async def start_handler(message: Message):
     await message.answer_photo(
-        photo=FSInputFile(HELLO_PHOTO),
+        photo=get_hello_photo(),
         caption=get_hello_text(),
         parse_mode='HTML',
         reply_markup=hello_inline,
@@ -193,7 +198,7 @@ async def callback_handler(callback: CallbackQuery):
 
     elif data == 'back':
         await callback.message.answer_photo(
-            photo=FSInputFile(HELLO_PHOTO),
+            photo=get_hello_photo(),
             caption=get_hello_text(),
             parse_mode='HTML',
             reply_markup=hello_inline,
@@ -294,7 +299,7 @@ async def setwelcome_handler(message: Message):
     db.set_setting('hello_text', parts[1])
     await message.answer('Приветственный текст обновлён. Вот как он теперь выглядит:')
     await message.answer_photo(
-        photo=FSInputFile(HELLO_PHOTO),
+        photo=get_hello_photo(),
         caption=get_hello_text(),
         parse_mode='HTML',
         reply_markup=hello_inline,
@@ -316,6 +321,27 @@ async def settariffs_handler(message: Message):
     db.set_setting('tariffs_text', parts[1])
     await message.answer('Текст экрана тарифов обновлён. Вот как он теперь выглядит:')
     await message.answer(get_tariffs_text(), parse_mode='HTML', reply_markup=plans_inline)
+
+
+@dp.message(Command('sethellophoto'), F.photo)
+async def sethellophoto_handler(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    db.set_setting('hello_photo_id', message.photo[-1].file_id)
+    await message.answer('Фото главного меню обновлено. Вот как оно теперь выглядит:')
+    await message.answer_photo(
+        photo=get_hello_photo(),
+        caption=get_hello_text(),
+        parse_mode='HTML',
+        reply_markup=hello_inline,
+    )
+
+
+@dp.message(Command('sethellophoto'))
+async def sethellophoto_no_photo_handler(message: Message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    await message.answer('Использование: отправьте фото с подписью /sethellophoto')
 
 
 async def main():
