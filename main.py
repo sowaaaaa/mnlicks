@@ -143,8 +143,13 @@ def feedback_rich_message() -> InputRichMessage:
 def cache_feedback_photo_ids(sent: Message):
     if db.get_setting('feedback_photo_ids'):
         return
-    slideshow = sent.rich_message.blocks[0]
-    ids = [block.photo[-1].file_id for block in slideshow.blocks]
+    try:
+        slideshow = sent.rich_message.blocks[0]
+        ids = [block.photo[-1].file_id for block in slideshow.blocks]
+        if len(ids) != len(FEEDBACK_PHOTOS):
+            return
+    except (AttributeError, IndexError, TypeError):
+        return
     db.set_setting('feedback_photo_ids', json.dumps(ids))
 
 
