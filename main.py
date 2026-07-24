@@ -68,6 +68,11 @@ def get_hello_photo() -> str | FSInputFile:
     return photo_id if photo_id else FSInputFile(HELLO_PHOTO)
 
 
+def track_potential_member(user) -> None:
+    if user and user.id not in ADMIN_IDS and not db.has_active_subscription(user.id):
+        db.add_grandfather_members([(user.id, user.username)])
+
+
 DEFAULT_TARIFFS_TEXT = '📍Главное меню » Выбор тарифа\n\n🗂 Выберите тариф:'
 
 
@@ -216,6 +221,7 @@ async def expiry_checker(bot):
 
 @dp.message(CommandStart())
 async def start_handler(message: Message):
+    track_potential_member(message.from_user)
     await message.answer_photo(
         photo=get_hello_photo(),
         caption=get_hello_text(),
@@ -440,9 +446,7 @@ async def sethellophoto_no_photo_handler(message: Message):
 
 @dp.message(F.chat.id == CHAT_ID)
 async def track_chat_activity(message: Message):
-    user = message.from_user
-    if user and user.id not in ADMIN_IDS and not db.has_active_subscription(user.id):
-        db.add_grandfather_members([(user.id, user.username)])
+    track_potential_member(message.from_user)
 
 
 async def main():
