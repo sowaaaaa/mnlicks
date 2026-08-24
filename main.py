@@ -1,7 +1,9 @@
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timedelta
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,10 +24,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+LOG_FILE = Path(__file__).parent / "bot.log"
+
+
+def setup_logging():
+    file_handler = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.basicConfig(level=logging.INFO, handlers=[file_handler, logging.StreamHandler()])
+
+
+setup_logging()
+
 dp = Dispatcher()
 cp = CryptoPay(os.environ["CRYPTO_PAY_TOKEN"])
 ADMIN_IDS = {int(x) for x in os.environ["ADMIN_IDS"].split(",")}
 CHAT_ID = int(os.environ["CHAT_ID"]) if os.environ.get("CHAT_ID") else None
+ARCHIVE_CHAT_ID = int(os.environ["ARCHIVE_CHAT_ID"])
 SEASON_END_DATE = datetime.fromisoformat(os.environ["SEASON_END_DATE"])
 HELLO_PHOTO = str(Path(__file__).parent / "hello.jpg")
 ULTIMATE_PHOTO = str(Path(__file__).parent / "ultimate.png")
@@ -164,6 +178,13 @@ def plan_expiry(plan_key: str) -> datetime:
     return datetime.now() + timedelta(days=30)
 
 
+async def notify_archive(bot, text: str):
+    try:
+        await bot.send_message(ARCHIVE_CHAT_ID, text, parse_mode='HTML')
+    except TelegramAPIError:
+        logging.exception('Failed to notify archive chat')
+
+
 async def grant_access(bot, user_id: int, username: str | None, plan_key: str) -> str:
     invite = await bot.create_chat_invite_link(
         chat_id=CHAT_ID,
@@ -173,7 +194,36 @@ async def grant_access(bot, user_id: int, username: str | None, plan_key: str) -
     )
     expires_at = plan_expiry(plan_key)
     db.upsert_subscription(user_id, username, plan_key, expires_at, invite.invite_link)
+    plan = PLANS[plan_key]
+    who = f'@{username}' if username else str(user_id)
+    await notify_archive(
+        bot,
+        f'💰 <b>Новая подписка</b>\n'
+        f'Пользователь: <code>{user_id}</code> ({who})\n'
+        f'План: {plan["label"]} ({plan["amount"]}₽)\n'
+        f'До: {expires_at:%d.%m.%Y}',
+    )
     return invite.invite_link
+
+
+async def send_daily_archive(bot):
+    today = datetime.now().strftime('%Y-%m-%d')
+    if db.get_setting('last_archive_date') == today:
+        return
+    try:
+        if Path(db.DB_PATH).exists():
+            await bot.send_document(
+                ARCHIVE_CHAT_ID,
+                FSInputFile(db.DB_PATH, filename=f'subscriptions_{today}.db'),
+            )
+        if LOG_FILE.exists():
+            await bot.send_document(
+                ARCHIVE_CHAT_ID,
+                FSInputFile(str(LOG_FILE), filename=f'bot_{today}.log'),
+            )
+    except TelegramAPIError:
+        logging.exception('Failed to send daily archive')
+    db.set_setting('last_archive_date', today)
 
 
 MEMBERSHIP_SWEEP_DATE = datetime(2026, 8, 31)
@@ -196,7 +246,7 @@ async def expiry_checker(bot):
                     reply_markup=plans_inline,
                 )
             except TelegramAPIError:
-                pass
+                logging.exception('Failed to kick expired user %s', user_id)
             db.mark_status(user_id, 'expired')
 
         if datetime.now() >= MEMBERSHIP_SWEEP_DATE:
@@ -213,9 +263,10 @@ async def expiry_checker(bot):
                             reply_markup=plans_inline,
                         )
                     except TelegramAPIError:
-                        pass
+                        logging.exception('Failed to kick unpaid member %s', user_id)
                 db.remove_grandfather_member(user_id)
 
+        await send_daily_archive(bot)
         await asyncio.sleep(3600)
 
 
@@ -311,7 +362,7 @@ async def payment_handler(invoice: Invoice, message: Message):
         link = await grant_access(message.bot, message.chat.id, message.chat.username, invoice.payload)
         await message.answer(access_granted_text(invoice.payload, link), parse_mode='HTML')
     except TelegramForbiddenError:
-        pass
+        logging.exception('Could not confirm payment to user %s (bot blocked?)', message.chat.id)
 
 
 @dp.message(Command('getid'))
