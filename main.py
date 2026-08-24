@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from urllib.parse import quote
@@ -206,8 +206,15 @@ async def grant_access(bot, user_id: int, username: str | None, plan_key: str) -
     return invite.invite_link
 
 
+MSK = timezone(timedelta(hours=3))
+ARCHIVE_HOUR_MSK = 15
+
+
 async def send_daily_archive(bot):
-    today = datetime.now().strftime('%Y-%m-%d')
+    now_msk = datetime.now(timezone.utc).astimezone(MSK)
+    if now_msk.hour < ARCHIVE_HOUR_MSK:
+        return
+    today = now_msk.strftime('%Y-%m-%d')
     if db.get_setting('last_archive_date') == today:
         return
     try:
