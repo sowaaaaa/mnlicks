@@ -129,7 +129,21 @@ def payment_method_inline(plan_key: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text='Карта • РУ', url=f'https://t.me/mnlicks?text={card_text}', icon_custom_emoji_id='5425008221330880308'),
             InlineKeyboardButton(text='USDT • TRC-20', callback_data=f'crypto_{plan_key}', icon_custom_emoji_id='5361914370068613491'),
         ],
+        [InlineKeyboardButton(text='СБП', callback_data=f'sbp_{plan_key}')],
         [InlineKeyboardButton(text='« Назад', callback_data='join')],
+    ])
+
+
+USER_AGREEMENT_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-08-27-55'
+PRIVACY_POLICY_URL = 'https://telegra.ph/Politika-konfidencialnosti-08-27-76'
+
+
+def sbp_agreement_inline(plan_key: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text='📄 Пользовательское соглашение', url=USER_AGREEMENT_URL)],
+        [InlineKeyboardButton(text='🔒 Политика конфиденциальности', url=PRIVACY_POLICY_URL)],
+        [InlineKeyboardButton(text='Перейти к оплате', callback_data=f'sbpgo_{plan_key}')],
+        [InlineKeyboardButton(text='« Назад', callback_data=plan_key)],
     ])
 
 
@@ -354,6 +368,16 @@ async def callback_handler(callback: CallbackQuery):
             reply_markup=pay_inline,
         )
         invoice.poll(message=callback.message)
+
+    elif data.startswith('sbpgo_'):
+        await callback.message.answer('Способ оплаты по СБП пока не настроен.')
+
+    elif data.startswith('sbp_'):
+        plan_key = data[4:]
+        await callback.message.answer(
+            'Перед тем как оплатить, вы соглашаетесь с Пользовательским соглашением и Политикой конфиденциальности.',
+            reply_markup=sbp_agreement_inline(plan_key),
+        )
 
     elif data == 'feedbacks':
         sent = await callback.message.answer_rich(
