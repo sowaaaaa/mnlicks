@@ -16,7 +16,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     Message, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery,
     InputMediaPhoto, InputRichMessage, InputRichBlockSlideshow, InputRichBlockPhoto, RichBlockCaption,
-    RichTextCustomEmoji,
+    RichTextCustomEmoji, BotCommand,
 )
 from aiosend import CryptoPay
 from aiosend.types import Invoice
@@ -546,6 +546,7 @@ async def unknown_private_message(message: Message):
 async def main():
     session = AiohttpSession(proxy=os.environ.get("PROXY_URL"))
     bot = Bot(token=os.environ["BOT_TOKEN"], session=session)
+    await bot.set_my_commands([BotCommand(command='start', description='🏠 Открыть меню!')])
     await asyncio.gather(
         dp.start_polling(bot),
         cp.start_polling(),
