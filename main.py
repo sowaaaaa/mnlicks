@@ -138,10 +138,16 @@ USER_AGREEMENT_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-08-27-55'
 PRIVACY_POLICY_URL = 'https://telegra.ph/Politika-konfidencialnosti-08-27-76'
 
 
+def sbp_agreement_text() -> str:
+    return (
+        f'Перед тем как оплатить, вы соглашаетесь с '
+        f'<a href="{USER_AGREEMENT_URL}">Пользовательским соглашением</a> и '
+        f'<a href="{PRIVACY_POLICY_URL}">Политикой конфиденциальности</a>.'
+    )
+
+
 def sbp_agreement_inline(plan_key: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='📄 Пользовательское соглашение', url=USER_AGREEMENT_URL)],
-        [InlineKeyboardButton(text='🔒 Политика конфиденциальности', url=PRIVACY_POLICY_URL)],
         [InlineKeyboardButton(text='Перейти к оплате', callback_data=f'sbpgo_{plan_key}')],
         [InlineKeyboardButton(text='« Назад', callback_data=plan_key)],
     ])
@@ -375,7 +381,8 @@ async def callback_handler(callback: CallbackQuery):
     elif data.startswith('sbp_'):
         plan_key = data[4:]
         await callback.message.answer(
-            'Перед тем как оплатить, вы соглашаетесь с Пользовательским соглашением и Политикой конфиденциальности.',
+            sbp_agreement_text(),
+            parse_mode='HTML',
             reply_markup=sbp_agreement_inline(plan_key),
         )
 
