@@ -5,7 +5,6 @@ import os
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from urllib.parse import quote
 
 import db
 from aiogram import Bot, Dispatcher, F
@@ -18,6 +17,7 @@ from aiogram.types import (
     InputMediaPhoto, InputRichMessage, InputRichBlockSlideshow, InputRichBlockPhoto, RichBlockCaption,
     RichTextCustomEmoji, BotCommand,
 )
+from aiohttp import ClientError, ClientSession
 from aiosend import CryptoPay
 from aiosend.types import Invoice
 from dotenv import load_dotenv
@@ -41,6 +41,11 @@ ADMIN_IDS = {int(x) for x in os.environ["ADMIN_IDS"].split(",")}
 CHAT_ID = int(os.environ["CHAT_ID"]) if os.environ.get("CHAT_ID") else None
 ARCHIVE_CHAT_ID = int(os.environ["ARCHIVE_CHAT_ID"])
 SEASON_END_DATE = datetime.fromisoformat(os.environ["SEASON_END_DATE"])
+PLATEGA_BASE_URL = os.environ.get("PLATEGA_BASE_URL", "https://app.platega.io").rstrip("/")
+PLATEGA_MERCHANT_ID = os.environ.get("PLATEGA_MERCHANT_ID")
+PLATEGA_SECRET = os.environ.get("PLATEGA_SECRET")
+PLATEGA_RETURN_URL = os.environ.get("PLATEGA_RETURN_URL", "https://t.me/mnlicks")
+PLATEGA_FAILED_URL = os.environ.get("PLATEGA_FAILED_URL", PLATEGA_RETURN_URL)
 HELLO_PHOTO = str(Path(__file__).parent / "hello.jpg")
 ULTIMATE_PHOTO = str(Path(__file__).parent / "ultimate.png")
 STANDART_PHOTO = str(Path(__file__).parent / "standart.png")
@@ -97,18 +102,23 @@ hello_inline = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text='Вступить в MnlicksTrade', callback_data='join')],
     [InlineKeyboardButton(text='Отзывы', callback_data='feedbacks')],
     [InlineKeyboardButton(text='Задать вопрос', url="https://t.me/mnlicks")],
+    [InlineKeyboardButton(text='Инфо 👨‍💻', callback_data='info')],
 ])
 
 plans_inline = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='Standart Edition', callback_data='month')],
-    [InlineKeyboardButton(text='Ultimate Edition', callback_data='season')],
+    [InlineKeyboardButton(text='🔥 MnlicksTrade + MnlicksMentality 1 месяц', callback_data='month')],
+    [InlineKeyboardButton(text='☘️ MnlicksTrade + MnlicksMentality На FC 27', callback_data='season')],
     [InlineKeyboardButton(text='« Назад', callback_data='back')],
 ])
 
 PLANS = {
-    'month': {'amount': 1000, 'label': 'Standart Edition', 'desc': 'на 1 месяц', 'short': 'Standart Edition'},
-    'season': {'amount': 6000, 'label': 'Ultimate Edition', 'desc': 'до конца FC 27', 'short': 'Ultimate Edition'},
+    'month': {'amount': 1000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': '1 месяц', 'short': '1 месяц'},
+    'season': {'amount': 6000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': 'Весь период FC 27', 'short': 'FC 27'},
 }
+
+
+def tariffs_screen_text() -> str:
+    return get_tariffs_text()
 
 
 def access_granted_text(plan_key: str, link: str) -> str:
@@ -122,14 +132,9 @@ def access_granted_text(plan_key: str, link: str) -> str:
 
 
 def payment_method_inline(plan_key: str) -> InlineKeyboardMarkup:
-    plan = PLANS[plan_key]
-    card_text = quote(f'Здравствуйте! Хочу оплатить тариф «{plan["label"]}» ({plan["amount"]}₽) картой РФ.')
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text='Карта • РУ', url=f'https://t.me/mnlicks?text={card_text}', icon_custom_emoji_id='5425008221330880308'),
-            InlineKeyboardButton(text='USDT • TRC-20', callback_data=f'crypto_{plan_key}', icon_custom_emoji_id='5361914370068613491'),
-        ],
-        [InlineKeyboardButton(text='СБП', callback_data=f'sbp_{plan_key}')],
+        [InlineKeyboardButton(text='Оплата картой', callback_data=f'card_{plan_key}', icon_custom_emoji_id='5425008221330880308')],
+        [InlineKeyboardButton(text='USDT • TRC-20', callback_data=f'crypto_{plan_key}', icon_custom_emoji_id='5361914370068613491')],
         [InlineKeyboardButton(text='« Назад', callback_data='join')],
     ])
 
@@ -138,19 +143,18 @@ USER_AGREEMENT_URL = 'https://telegra.ph/Polzovatelskoe-soglashenie-08-27-55'
 PRIVACY_POLICY_URL = 'https://telegra.ph/Politika-konfidencialnosti-08-27-76'
 
 
-def sbp_agreement_text() -> str:
+def info_text() -> str:
     return (
-        f'Перед тем как оплатить, вы соглашаетесь с '
-        f'<a href="{USER_AGREEMENT_URL}">Пользовательским соглашением</a> и '
-        f'<a href="{PRIVACY_POLICY_URL}">Политикой конфиденциальности</a>.'
+        '📍Главное меню » Инфо\n\n'
+        'Документы MnlicksTrade всегда доступны здесь:'
     )
 
 
-def sbp_agreement_inline(plan_key: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text='Перейти к оплате', callback_data=f'sbpgo_{plan_key}')],
-        [InlineKeyboardButton(text='« Назад', callback_data=plan_key)],
-    ])
+info_inline = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text='Пользовательское соглашение', url=USER_AGREEMENT_URL)],
+    [InlineKeyboardButton(text='Политика конфиденциальности', url=PRIVACY_POLICY_URL)],
+    [InlineKeyboardButton(text='« Назад', callback_data='back')],
+])
 
 
 feedback_back_inline = InlineKeyboardMarkup(inline_keyboard=[
@@ -203,6 +207,126 @@ async def notify_archive(bot, text: str):
         await bot.send_message(ARCHIVE_CHAT_ID, text, parse_mode='HTML')
     except TelegramAPIError:
         logging.exception('Failed to notify archive chat')
+
+
+def platega_headers() -> dict[str, str]:
+    if not PLATEGA_MERCHANT_ID or not PLATEGA_SECRET:
+        raise RuntimeError('Platega credentials are not configured')
+    return {
+        'X-MerchantId': PLATEGA_MERCHANT_ID,
+        'X-Secret': PLATEGA_SECRET,
+        'Content-Type': 'application/json',
+    }
+
+
+async def create_platega_payment(user, plan_key: str) -> tuple[str, str]:
+    plan = PLANS[plan_key]
+    username = user.username if user else None
+    payload = json.dumps(
+        {'user_id': user.id, 'plan_key': plan_key},
+        ensure_ascii=False,
+        separators=(',', ':'),
+    )
+    body = {
+        'paymentDetails': {
+            'amount': plan['amount'],
+            'currency': 'RUB',
+        },
+        'description': f'MnlicksTrade - {plan["short"]}',
+        'return': PLATEGA_RETURN_URL,
+        'failedUrl': PLATEGA_FAILED_URL,
+        'payload': payload,
+        'metadata': {
+            'userId': str(user.id),
+            'userName': f'@{username}' if username else str(user.id),
+        },
+    }
+    async with ClientSession() as session:
+        async with session.post(
+            f'{PLATEGA_BASE_URL}/v2/transaction/process',
+            headers=platega_headers(),
+            json=body,
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status >= 400:
+                raise RuntimeError(f'Platega create failed: {response.status} {data}')
+
+    transaction_id = data.get('transactionId') or data.get('id')
+    payment_url = data.get('url')
+    if not transaction_id or not payment_url:
+        raise RuntimeError(f'Platega response is missing transaction id or url: {data}')
+
+    db.save_platega_payment(transaction_id, user.id, username, plan_key, plan['amount'])
+    return transaction_id, payment_url
+
+
+async def get_platega_payment_status(transaction_id: str) -> dict:
+    async with ClientSession() as session:
+        async with session.get(
+            f'{PLATEGA_BASE_URL}/transaction/{transaction_id}',
+            headers=platega_headers(),
+        ) as response:
+            data = await response.json(content_type=None)
+            if response.status >= 400:
+                raise RuntimeError(f'Platega status failed: {response.status} {data}')
+            return data
+
+
+def platega_amount_matches(value, expected: int) -> bool:
+    try:
+        return float(value) == float(expected)
+    except (TypeError, ValueError):
+        return False
+
+
+async def process_platega_payment(bot, payment: tuple[str, int, str | None, str, int]):
+    transaction_id, user_id, username, plan_key, amount = payment
+    data = await get_platega_payment_status(transaction_id)
+    status = data.get('status')
+
+    if status == 'CONFIRMED':
+        payment_details = data.get('paymentDetails') or {}
+        paid_amount = payment_details.get('amount')
+        currency = payment_details.get('currency')
+        if not platega_amount_matches(paid_amount, amount) or currency != 'RUB':
+            db.mark_platega_payment_status(transaction_id, 'AMOUNT_MISMATCH')
+            await notify_archive(
+                bot,
+                f'⚠️ <b>Platega: сумма платежа не совпала</b>\n'
+                f'ID: <code>{transaction_id}</code>\n'
+                f'Пользователь: <code>{user_id}</code>\n'
+                f'Ожидалось: {amount} RUB\n'
+                f'Получено: {paid_amount} {currency}',
+            )
+            return
+
+        link = await grant_access(bot, user_id, username, plan_key)
+        db.mark_platega_payment_status(transaction_id, 'CONFIRMED')
+        try:
+            await bot.send_message(user_id, access_granted_text(plan_key, link), parse_mode='HTML')
+        except TelegramForbiddenError:
+            logging.exception('Could not confirm Platega payment to user %s (bot blocked?)', user_id)
+        return
+
+    if status in {'CANCELED', 'CHARGEBACKED'}:
+        db.mark_platega_payment_status(transaction_id, status)
+        try:
+            await bot.send_message(
+                user_id,
+                'Оплата не прошла. Если деньги списались, напишите @mnlicks.',
+            )
+        except TelegramAPIError:
+            logging.exception('Could not notify user %s about Platega status %s', user_id, status)
+
+
+async def platega_payment_checker(bot):
+    while True:
+        for payment in db.get_pending_platega_payments():
+            try:
+                await process_platega_payment(bot, payment)
+            except (ClientError, RuntimeError, TelegramAPIError):
+                logging.exception('Failed to check Platega payment %s', payment[0])
+        await asyncio.sleep(30)
 
 
 async def grant_access(bot, user_id: int, username: str | None, plan_key: str) -> str:
@@ -323,7 +447,7 @@ async def callback_handler(callback: CallbackQuery):
 
     if data == 'join':
         await callback.message.answer(
-            get_tariffs_text(),
+            tariffs_screen_text(),
             reply_markup=plans_inline,
         )
 
@@ -338,9 +462,11 @@ async def callback_handler(callback: CallbackQuery):
     elif data in PLANS:
         plan = PLANS[data]
         plan_text = (
-            f'📍Главное меню » Выбор тарифа » <b>{plan["label"]}</b>\n\n'
-            f'<blockquote>⚽️ Полный доступ в <b>MnlicksGang | TRADE</b> {plan["desc"]} — <b>{plan["amount"]}₽</b></blockquote>\n\n'
-            f'<tg-emoji emoji-id="5258204546391351475">💰</tg-emoji> Выберите способ оплаты:'
+            f'📍Главное меню » Выбор тарифа » <b>Оплата:</b>\n\n'
+            f'🍁 <b>{plan["label"]}</b>\n\n'
+            f'⏳<b>Срок</b> —> {plan["term"]}\n\n'
+            f'Цена —> {plan["amount"]}р\n\n'
+            f'Выберите способ оплаты:'
         )
         plan_photo = ULTIMATE_PHOTO if data == 'season' else STANDART_PHOTO
         await callback.message.answer_photo(
@@ -367,7 +493,8 @@ async def callback_handler(callback: CallbackQuery):
         ])
         await callback.message.answer(
             f'<tg-emoji emoji-id="5361914370068613491">👛</tg-emoji> USDT • TRC-20\n\n'
-            f'Тариф: <b>{plan["desc"]}</b>\n'
+            f'Тариф: <b>{plan["label"]}</b>\n'
+            f'Срок: <b>{plan["term"]}</b>\n'
             f'Сумма: <b>{plan["amount"]}₽</b> в USDT\n\n'
             f'<tg-emoji emoji-id="5258204546391351475">💰</tg-emoji> После успешной оплаты бот автоматически выдаст доступ.',
             parse_mode='HTML',
@@ -375,15 +502,36 @@ async def callback_handler(callback: CallbackQuery):
         )
         invoice.poll(message=callback.message)
 
-    elif data.startswith('sbpgo_'):
-        await callback.message.answer('Способ оплаты по СБП пока не настроен.')
+    elif data.startswith('card_'):
+        plan_key = data[5:]
+        plan = PLANS[plan_key]
+        try:
+            transaction_id, payment_url = await create_platega_payment(callback.from_user, plan_key)
+        except (ClientError, RuntimeError):
+            logging.exception('Failed to create Platega payment for user %s', callback.from_user.id)
+            await callback.message.answer(
+                'Не удалось создать ссылку на оплату. Попробуйте ещё раз или напишите @mnlicks.',
+            )
+            return
 
-    elif data.startswith('sbp_'):
-        plan_key = data[4:]
+        pay_inline = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text='Оплатить', url=payment_url)],
+        ])
         await callback.message.answer(
-            sbp_agreement_text(),
+            f'<tg-emoji emoji-id="5425008221330880308">💳</tg-emoji> Оплата картой\n\n'
+            f'Тариф: <b>{plan["label"]}</b>\n'
+            f'Срок: <b>{plan["term"]}</b>\n'
+            f'Сумма: <b>{plan["amount"]}₽</b>\n\n'
+            f'После успешной оплаты бот автоматически выдаст доступ.\n'
+            f'ID платежа: <code>{transaction_id}</code>',
             parse_mode='HTML',
-            reply_markup=sbp_agreement_inline(plan_key),
+            reply_markup=pay_inline,
+        )
+
+    elif data == 'info':
+        await callback.message.answer(
+            info_text(),
+            reply_markup=info_inline,
         )
 
     elif data == 'feedbacks':
@@ -509,7 +657,7 @@ async def settariffs_handler(message: Message):
         return
     db.set_setting('tariffs_text', parts[1])
     await message.answer('Текст экрана тарифов обновлён. Вот как он теперь выглядит:')
-    await message.answer(get_tariffs_text(), parse_mode='HTML', reply_markup=plans_inline)
+    await message.answer(tariffs_screen_text(), parse_mode='HTML', reply_markup=plans_inline)
 
 
 @dp.message(Command('sethellophoto'), F.photo)
@@ -550,6 +698,7 @@ async def main():
     await asyncio.gather(
         dp.start_polling(bot),
         cp.start_polling(),
+        platega_payment_checker(bot),
         expiry_checker(bot),
     )
 

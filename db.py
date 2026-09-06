@@ -29,6 +29,18 @@ def _connect():
             username TEXT
         )
     ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS platega_payments (
+            transaction_id TEXT PRIMARY KEY,
+            user_id INTEGER,
+            username TEXT,
+            plan_key TEXT,
+            amount INTEGER,
+            status TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        )
+    ''')
     return conn
 
 
@@ -113,4 +125,52 @@ def remove_grandfather_member(user_id: int):
     conn = _connect()
     with conn:
         conn.execute('DELETE FROM grandfather_members WHERE user_id = ?', (user_id,))
+    conn.close()
+
+
+def save_platega_payment(
+    transaction_id: str,
+    user_id: int,
+    username: str | None,
+    plan_key: str,
+    amount: int,
+    status: str = 'PENDING',
+):
+    now = datetime.now().isoformat()
+    conn = _connect()
+    with conn:
+        conn.execute('''
+            INSERT INTO platega_payments (
+                transaction_id, user_id, username, plan_key, amount, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(transaction_id) DO UPDATE SET
+                user_id=excluded.user_id,
+                username=excluded.username,
+                plan_key=excluded.plan_key,
+                amount=excluded.amount,
+                status=excluded.status,
+                updated_at=excluded.updated_at
+        ''', (transaction_id, user_id, username, plan_key, amount, status, now, now))
+    conn.close()
+
+
+def get_pending_platega_payments() -> list[tuple[str, int, str | None, str, int]]:
+    conn = _connect()
+    rows = conn.execute('''
+        SELECT transaction_id, user_id, username, plan_key, amount
+        FROM platega_payments
+        WHERE status = 'PENDING'
+    ''').fetchall()
+    conn.close()
+    return rows
+
+
+def mark_platega_payment_status(transaction_id: str, status: str):
+    conn = _connect()
+    with conn:
+        conn.execute(
+            'UPDATE platega_payments SET status = ?, updated_at = ? WHERE transaction_id = ?',
+            (status, datetime.now().isoformat(), transaction_id),
+        )
     conn.close()
