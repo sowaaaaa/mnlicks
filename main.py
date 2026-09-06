@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -333,6 +334,17 @@ def platega_transaction_id(data: dict) -> str | None:
 
 
 async def platega_callback_handler(request: web.Request) -> web.Response:
+    merchant_id = request.headers.get('X-MerchantId', '')
+    secret = request.headers.get('X-Secret', '')
+    if (
+        not PLATEGA_MERCHANT_ID
+        or not PLATEGA_SECRET
+        or not hmac.compare_digest(merchant_id, PLATEGA_MERCHANT_ID)
+        or not hmac.compare_digest(secret, PLATEGA_SECRET)
+    ):
+        logging.warning('Platega callback with invalid credentials')
+        return web.json_response({'ok': False}, status=403)
+
     try:
         data = await request.json()
     except json.JSONDecodeError:
