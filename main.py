@@ -17,7 +17,7 @@ from aiogram.types import (
     InputMediaPhoto, InputRichMessage, InputRichBlockSlideshow, InputRichBlockPhoto, RichBlockCaption,
     RichTextCustomEmoji, BotCommand,
 )
-from aiohttp import ClientError, ClientSession
+from aiohttp import ClientError, ClientSession, web
 from aiosend import CryptoPay
 from aiosend.types import Invoice
 from dotenv import load_dotenv
@@ -44,8 +44,10 @@ SEASON_END_DATE = datetime.fromisoformat(os.environ["SEASON_END_DATE"])
 PLATEGA_BASE_URL = os.environ.get("PLATEGA_BASE_URL", "https://app.platega.io").rstrip("/")
 PLATEGA_MERCHANT_ID = os.environ.get("PLATEGA_MERCHANT_ID")
 PLATEGA_SECRET = os.environ.get("PLATEGA_SECRET")
-PLATEGA_RETURN_URL = os.environ.get("PLATEGA_RETURN_URL", "https://t.me/mnlicks")
+PLATEGA_RETURN_URL = os.environ.get("PLATEGA_RETURN_URL", "https://t.me/MnlicksTrade_bot")
 PLATEGA_FAILED_URL = os.environ.get("PLATEGA_FAILED_URL", PLATEGA_RETURN_URL)
+PLATEGA_WEBHOOK_HOST = os.environ.get("PLATEGA_WEBHOOK_HOST", "0.0.0.0")
+PLATEGA_WEBHOOK_PORT = int(os.environ.get("PLATEGA_WEBHOOK_PORT", "8080"))
 HELLO_PHOTO = str(Path(__file__).parent / "hello.jpg")
 ULTIMATE_PHOTO = str(Path(__file__).parent / "ultimate.png")
 STANDART_PHOTO = str(Path(__file__).parent / "standart.png")
@@ -274,7 +276,7 @@ async def get_platega_payment_status(transaction_id: str) -> dict:
 
 def platega_amount_matches(value, expected: int) -> bool:
     try:
-        return float(value) == float(expected)
+        return float(value) >= float(expected)
     except (TypeError, ValueError):
         return False
 
@@ -319,6 +321,61 @@ async def process_platega_payment(bot, payment: tuple[str, int, str | None, str,
             logging.exception('Could not notify user %s about Platega status %s', user_id, status)
 
 
+def platega_transaction_id(data: dict) -> str | None:
+    return (
+        data.get('transactionId')
+        or data.get('transaction_id')
+        or data.get('id')
+        or (data.get('transaction') or {}).get('id')
+        or (data.get('data') or {}).get('transactionId')
+        or (data.get('data') or {}).get('id')
+    )
+
+
+async def platega_callback_handler(request: web.Request) -> web.Response:
+    try:
+        data = await request.json()
+    except json.JSONDecodeError:
+        logging.warning('Platega callback with invalid JSON')
+        return web.json_response({'ok': False}, status=400)
+
+    transaction_id = platega_transaction_id(data)
+    if not transaction_id:
+        logging.warning('Platega callback without transaction id: %s', data)
+        return web.json_response({'ok': False}, status=400)
+
+    payment = db.get_platega_payment(transaction_id)
+    if not payment:
+        logging.warning('Platega callback for unknown payment %s: %s', transaction_id, data)
+        return web.json_response({'ok': True})
+
+    _, user_id, username, plan_key, amount, local_status = payment
+    if local_status == 'CONFIRMED':
+        return web.json_response({'ok': True})
+
+    try:
+        await process_platega_payment(request.app['bot'], (transaction_id, user_id, username, plan_key, amount))
+    except (ClientError, RuntimeError, TelegramAPIError):
+        logging.exception('Failed to process Platega callback %s', transaction_id)
+        return web.json_response({'ok': False}, status=500)
+
+    return web.json_response({'ok': True})
+
+
+async def start_platega_webhook_server(bot):
+    app = web.Application()
+    app['bot'] = bot
+    app.router.add_post('/platega/callback', platega_callback_handler)
+    app.router.add_get('/health', lambda request: web.Response(text='ok'))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, PLATEGA_WEBHOOK_HOST, PLATEGA_WEBHOOK_PORT)
+    await site.start()
+    logging.info('Platega callback server started on %s:%s', PLATEGA_WEBHOOK_HOST, PLATEGA_WEBHOOK_PORT)
+    while True:
+        await asyncio.sleep(3600)
+
+
 async def platega_payment_checker(bot):
     while True:
         for payment in db.get_pending_platega_payments():
@@ -326,7 +383,7 @@ async def platega_payment_checker(bot):
                 await process_platega_payment(bot, payment)
             except (ClientError, RuntimeError, TelegramAPIError):
                 logging.exception('Failed to check Platega payment %s', payment[0])
-        await asyncio.sleep(30)
+        await asyncio.sleep(5)
 
 
 async def grant_access(bot, user_id: int, username: str | None, plan_key: str) -> str:
@@ -697,6 +754,7 @@ async def main():
     await asyncio.gather(
         dp.start_polling(bot),
         cp.start_polling(),
+        start_platega_webhook_server(bot),
         platega_payment_checker(bot),
         expiry_checker(bot),
     )

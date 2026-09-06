@@ -166,6 +166,17 @@ def get_pending_platega_payments() -> list[tuple[str, int, str | None, str, int]
     return rows
 
 
+def get_platega_payment(transaction_id: str) -> tuple[str, int, str | None, str, int, str] | None:
+    conn = _connect()
+    row = conn.execute('''
+        SELECT transaction_id, user_id, username, plan_key, amount, status
+        FROM platega_payments
+        WHERE transaction_id = ?
+    ''', (transaction_id,)).fetchone()
+    conn.close()
+    return row
+
+
 def mark_platega_payment_status(transaction_id: str, status: str):
     conn = _connect()
     with conn:
