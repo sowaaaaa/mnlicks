@@ -115,7 +115,7 @@ plans_inline = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 PLANS = {
-    'month': {'amount': 1, 'label': 'MnlicksTrade + MnlicksMentality', 'term': '1 месяц', 'short': '1 месяц'},
+    'month': {'amount': 1000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': '1 месяц', 'short': '1 месяц'},
     'season': {'amount': 6000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': 'Весь период FC 27', 'short': 'FC 27'},
 }
 
