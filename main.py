@@ -313,13 +313,6 @@ async def process_platega_payment(bot, payment: tuple[str, int, str | None, str,
 
     if status in {'CANCELED', 'CHARGEBACKED'}:
         db.mark_platega_payment_status(transaction_id, status)
-        try:
-            await bot.send_message(
-                user_id,
-                'Оплата не прошла. Если деньги списались, напишите @mnlicks.',
-            )
-        except TelegramAPIError:
-            logging.exception('Could not notify user %s about Platega status %s', user_id, status)
 
 
 def platega_transaction_id(data: dict) -> str | None:
