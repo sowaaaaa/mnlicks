@@ -112,7 +112,7 @@ plans_inline = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 PLANS = {
-    'month': {'amount': 1000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': '1 месяц', 'short': '1 месяц'},
+    'month': {'amount': 1, 'label': 'MnlicksTrade + MnlicksMentality', 'term': '1 месяц', 'short': '1 месяц'},
     'season': {'amount': 6000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': 'Весь период FC 27', 'short': 'FC 27'},
 }
 
@@ -522,8 +522,7 @@ async def callback_handler(callback: CallbackQuery):
             f'Тариф: <b>{plan["label"]}</b>\n'
             f'Срок: <b>{plan["term"]}</b>\n'
             f'Сумма: <b>{plan["amount"]}₽</b>\n\n'
-            f'После успешной оплаты бот автоматически выдаст доступ.\n'
-            f'ID платежа: <code>{transaction_id}</code>',
+            f'После успешной оплаты бот автоматически выдаст доступ.',
             parse_mode='HTML',
             reply_markup=pay_inline,
         )
