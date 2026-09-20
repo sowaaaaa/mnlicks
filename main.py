@@ -119,6 +119,8 @@ PLANS = {
     'season': {'amount': 6000, 'label': 'MnlicksTrade + MnlicksMentality', 'term': 'Весь период FC 27', 'short': 'FC 27'},
 }
 
+PLAN_ALIASES = {'m': 'month', 's': 'season'}
+
 
 def tariffs_screen_text() -> str:
     return get_tariffs_text()
@@ -622,31 +624,32 @@ async def getid_channel_handler(message: Message):
     await message.answer(f'chat_id: <code>{message.chat.id}</code>', parse_mode='HTML')
 
 
-@dp.message(Command('grant'))
+@dp.message(Command('g'))
 async def grant_handler(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
 
-    plans = '|'.join(PLANS)
     usage = (
         'Использование:\n'
-        f'• /grant <id или @username> <{plans}>\n'
-        f'• либо ответьте (reply) командой /grant <{plans}> на сообщение человека в чате — самый надёжный способ,\n'
-        '  так как бот не всегда может найти пользователя по @username, если тот раньше не писал боту напрямую.'
+        '• /g <id или @username> <m|s>\n'
+        '• либо ответьте (reply) командой /g <m|s> на сообщение человека в чате — самый надёжный способ,\n'
+        '  так как бот не всегда может найти пользователя по @username, если тот раньше не писал боту напрямую.\n\n'
+        + ', '.join(f'{alias} — {PLANS[key]["term"]}' for alias, key in PLAN_ALIASES.items())
     )
     parts = message.text.split()
 
     if message.reply_to_message and message.reply_to_message.from_user:
-        if len(parts) != 2 or parts[1] not in PLANS:
+        if len(parts) != 2 or parts[1] not in PLAN_ALIASES:
             await message.answer(usage)
             return
         target = message.reply_to_message.from_user
-        user_id, username, plan_key = target.id, target.username, parts[1]
+        user_id, username = target.id, target.username
+        plan_key = PLAN_ALIASES[parts[1]]
     else:
-        if len(parts) != 3 or parts[2] not in PLANS:
+        if len(parts) != 3 or parts[2] not in PLAN_ALIASES:
             await message.answer(usage)
             return
-        plan_key = parts[2]
+        plan_key = PLAN_ALIASES[parts[2]]
         handle = parts[1].lstrip('@')
         if handle.isdigit():
             user_id, username = int(handle), None
@@ -656,7 +659,7 @@ async def grant_handler(message: Message):
             except TelegramAPIError:
                 await message.answer(
                     f'Не удалось найти пользователя @{handle}.\n'
-                    'Ответьте (reply) командой /grant на его сообщение в чате или укажите user_id.'
+                    'Ответьте (reply) командой /g на его сообщение в чате или укажите user_id.'
                 )
                 return
             user_id, username = chat.id, handle
