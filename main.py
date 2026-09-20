@@ -626,15 +626,53 @@ async def getid_channel_handler(message: Message):
 async def grant_handler(message: Message):
     if message.from_user.id not in ADMIN_IDS:
         return
+
+    plans = '|'.join(PLANS)
+    usage = (
+        'Использование:\n'
+        f'• /grant <id или @username> <{plans}>\n'
+        f'• либо ответьте (reply) командой /grant <{plans}> на сообщение человека в чате — самый надёжный способ,\n'
+        '  так как бот не всегда может найти пользователя по @username, если тот раньше не писал боту напрямую.'
+    )
     parts = message.text.split()
-    if len(parts) != 3 or parts[2] not in PLANS:
-        await message.answer(f'Использование: /grant <user_id> <{"|".join(PLANS)}>')
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        if len(parts) != 2 or parts[1] not in PLANS:
+            await message.answer(usage)
+            return
+        target = message.reply_to_message.from_user
+        user_id, username, plan_key = target.id, target.username, parts[1]
+    else:
+        if len(parts) != 3 or parts[2] not in PLANS:
+            await message.answer(usage)
+            return
+        plan_key = parts[2]
+        handle = parts[1].lstrip('@')
+        if handle.isdigit():
+            user_id, username = int(handle), None
+        else:
+            try:
+                chat = await message.bot.get_chat(f'@{handle}')
+            except TelegramAPIError:
+                await message.answer(
+                    f'Не удалось найти пользователя @{handle}.\n'
+                    'Ответьте (reply) командой /grant на его сообщение в чате или укажите user_id.'
+                )
+                return
+            user_id, username = chat.id, handle
+
+    who = f'@{username}' if username else str(user_id)
+    link = await grant_access(message.bot, user_id, username, plan_key)
+    try:
+        await message.bot.send_message(user_id, access_granted_text(plan_key, link), parse_mode='HTML')
+    except TelegramAPIError:
+        logging.exception('Could not send manual grant link to user %s', user_id)
+        await message.answer(
+            f'Доступ выдан пользователю {who}, но отправить ему ссылку не удалось '
+            f'(бот заблокирован или пользователь не запускал бота).\nПередайте ссылку вручную: {link}'
+        )
         return
-    user_id = int(parts[1])
-    plan_key = parts[2]
-    link = await grant_access(message.bot, user_id, None, plan_key)
-    await message.bot.send_message(user_id, access_granted_text(plan_key, link), parse_mode='HTML')
-    await message.answer(f'Доступ выдан пользователю {user_id}.')
+    await message.answer(f'Доступ выдан пользователю {who}.')
 
 
 @dp.message(Command('addmembers'))
