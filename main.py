@@ -3,6 +3,8 @@ import hmac
 import json
 import logging
 import os
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -49,6 +51,8 @@ PLATEGA_RETURN_URL = os.environ.get("PLATEGA_RETURN_URL", "https://t.me/MnlicksT
 PLATEGA_FAILED_URL = os.environ.get("PLATEGA_FAILED_URL", PLATEGA_RETURN_URL)
 PLATEGA_WEBHOOK_HOST = os.environ.get("PLATEGA_WEBHOOK_HOST", "0.0.0.0")
 PLATEGA_WEBHOOK_PORT = int(os.environ.get("PLATEGA_WEBHOOK_PORT", "8080"))
+# база бота Mnlicks Squad (тот же сервер): там лежат скидки за отзывы о разборе
+SQUAD_DB_PATH = os.environ.get("SQUAD_DB_PATH")
 HELLO_PHOTO = str(Path(__file__).parent / "hello.jpg")
 ULTIMATE_PHOTO = str(Path(__file__).parent / "ultimate.png")
 STANDART_PHOTO = str(Path(__file__).parent / "standart.png")
@@ -214,6 +218,50 @@ async def notify_archive(bot, text: str):
         logging.exception('Failed to notify archive chat')
 
 
+def review_discount(user_id: int) -> int:
+    """Неиспользованная скидка за отзыв в боте Mnlicks Squad, ₽. Если базы нет или она недоступна — 0."""
+    if not SQUAD_DB_PATH:
+        return 0
+    try:
+        with closing(sqlite3.connect(SQUAD_DB_PATH, timeout=5)) as conn:
+            row = conn.execute(
+                'SELECT amount FROM review_discounts WHERE user_id = ? AND used_at IS NULL', (user_id,)
+            ).fetchone()
+        return row[0] if row else 0
+    except sqlite3.Error:
+        logging.exception('Could not read review discount for user %s', user_id)
+        return 0
+
+
+def use_review_discount(user_id: int):
+    if not SQUAD_DB_PATH:
+        return
+    try:
+        with closing(sqlite3.connect(SQUAD_DB_PATH, timeout=5)) as conn:
+            conn.execute(
+                'UPDATE review_discounts SET used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND used_at IS NULL',
+                (user_id,),
+            )
+            conn.commit()
+    except sqlite3.Error:
+        logging.exception('Could not mark review discount as used for user %s', user_id)
+
+
+def plan_price(user_id: int, plan_key: str) -> tuple[int, int]:
+    """(цена к оплате, скидка) для пользователя."""
+    discount = review_discount(user_id)
+    return PLANS[plan_key]['amount'] - discount, discount
+
+
+PLATEGA_REVIEW_EXTRA = {'month': 100, 'season': 200}
+
+
+def price_text(price: int, discount: int, plan_key: str) -> str:
+    if not discount:
+        return f'{price}р'
+    return f'<s>{PLANS[plan_key]["amount"]}р</s> {price}р'
+
+
 def platega_headers() -> dict[str, str]:
     if not PLATEGA_MERCHANT_ID or not PLATEGA_SECRET:
         raise RuntimeError('Platega credentials are not configured')
@@ -224,7 +272,7 @@ def platega_headers() -> dict[str, str]:
     }
 
 
-async def create_platega_payment(user, plan_key: str) -> tuple[str, str]:
+async def create_platega_payment(user, plan_key: str, amount: int) -> tuple[str, str]:
     plan = PLANS[plan_key]
     username = user.username if user else None
     payload = json.dumps(
@@ -234,7 +282,7 @@ async def create_platega_payment(user, plan_key: str) -> tuple[str, str]:
     )
     body = {
         'paymentDetails': {
-            'amount': plan['amount'],
+            'amount': amount,
             'currency': 'RUB',
         },
         'description': f'MnlicksTrade - {plan["short"]}',
@@ -261,7 +309,7 @@ async def create_platega_payment(user, plan_key: str) -> tuple[str, str]:
     if not transaction_id or not payment_url:
         raise RuntimeError(f'Platega response is missing transaction id or url: {data}')
 
-    db.save_platega_payment(transaction_id, user.id, username, plan_key, plan['amount'])
+    db.save_platega_payment(transaction_id, user.id, username, plan_key, amount)
     return transaction_id, payment_url
 
 
@@ -307,6 +355,8 @@ async def process_platega_payment(bot, payment: tuple[str, int, str | None, str,
 
         link = await grant_access(bot, user_id, username, plan_key)
         db.mark_platega_payment_status(transaction_id, 'CONFIRMED')
+        if amount < PLANS[plan_key]['amount']:
+            use_review_discount(user_id)
         try:
             await bot.send_message(user_id, access_granted_text(plan_key, link), parse_mode='HTML')
         except TelegramForbiddenError:
@@ -525,11 +575,12 @@ async def callback_handler(callback: CallbackQuery):
 
     elif data in PLANS:
         plan = PLANS[data]
+        price, discount = plan_price(callback.from_user.id, data)
         plan_text = (
             f'📍Главное меню » Выбор тарифа » <b>Оплата:</b>\n\n'
             f'🍁 <b>{plan["label"]}</b>\n\n'
             f'⏳<b>Срок</b> —> {plan["term"]}\n\n'
-            f'Цена —> {plan["amount"]}р\n\n'
+            f'Цена —> {price_text(price, discount, data)}\n\n'
             f'Выберите способ оплаты:'
         )
         plan_photo = ULTIMATE_PHOTO if data == 'season' else STANDART_PHOTO
@@ -543,14 +594,16 @@ async def callback_handler(callback: CallbackQuery):
     elif data.startswith('crypto_'):
         plan_key = data[7:]
         plan = PLANS[plan_key]
+        price, discount = plan_price(callback.from_user.id, plan_key)
         invoice = await cp.create_invoice(
-            plan['amount'],
+            price,
             currency_type='fiat',
             fiat='RUB',
             accepted_assets=['USDT'],
             description=f'MnlicksTrade — {plan["label"]}',
             expires_in=3600,
-            payload=plan_key,
+            # «|d» — счёт со скидкой за отзыв: после оплаты списываем её
+            payload=f'{plan_key}|d' if discount else plan_key,
         )
         pay_inline = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text='Оплатить', url=invoice.mini_app_invoice_url)],
@@ -559,7 +612,7 @@ async def callback_handler(callback: CallbackQuery):
             f'<tg-emoji emoji-id="5361914370068613491">👛</tg-emoji> USDT • TRC-20\n\n'
             f'Тариф: <b>{plan["label"]}</b>\n'
             f'Срок: <b>{plan["term"]}</b>\n'
-            f'Сумма: <b>{plan["amount"]}₽</b> в USDT\n\n'
+            f'Сумма: <b>{price}₽</b> в USDT\n\n'
             f'<tg-emoji emoji-id="5258204546391351475">💰</tg-emoji> После успешной оплаты бот автоматически выдаст доступ.',
             parse_mode='HTML',
             reply_markup=pay_inline,
@@ -569,8 +622,10 @@ async def callback_handler(callback: CallbackQuery):
     elif data.startswith('card_'):
         plan_key = data[5:]
         plan = PLANS[plan_key]
+        price, discount = plan_price(callback.from_user.id, plan_key)
+        invoice_amount = price - PLATEGA_REVIEW_EXTRA[plan_key] if discount else price
         try:
-            transaction_id, payment_url = await create_platega_payment(callback.from_user, plan_key)
+            transaction_id, payment_url = await create_platega_payment(callback.from_user, plan_key, invoice_amount)
         except (ClientError, RuntimeError):
             logging.exception('Failed to create Platega payment for user %s', callback.from_user.id)
             await callback.message.answer(
@@ -585,7 +640,7 @@ async def callback_handler(callback: CallbackQuery):
             f'<tg-emoji emoji-id="5425008221330880308">💳</tg-emoji> Оплата картой\n\n'
             f'Тариф: <b>{plan["label"]}</b>\n'
             f'Срок: <b>{plan["term"]}</b>\n'
-            f'Сумма: <b>{plan["amount"]}₽</b>\n\n'
+            f'Сумма: <b>{price}₽</b>\n\n'
             f'После успешной оплаты бот автоматически выдаст доступ.',
             parse_mode='HTML',
             reply_markup=pay_inline,
@@ -607,9 +662,12 @@ async def callback_handler(callback: CallbackQuery):
 
 @cp.invoice_paid()
 async def payment_handler(invoice: Invoice, message: Message):
+    plan_key, _, discounted = invoice.payload.partition('|')
     try:
-        link = await grant_access(message.bot, message.chat.id, message.chat.username, invoice.payload)
-        await message.answer(access_granted_text(invoice.payload, link), parse_mode='HTML')
+        link = await grant_access(message.bot, message.chat.id, message.chat.username, plan_key)
+        if discounted:
+            use_review_discount(message.chat.id)
+        await message.answer(access_granted_text(plan_key, link), parse_mode='HTML')
     except TelegramForbiddenError:
         logging.exception('Could not confirm payment to user %s (bot blocked?)', message.chat.id)
 
