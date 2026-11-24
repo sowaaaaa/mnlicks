@@ -113,8 +113,8 @@ hello_inline = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 plans_inline = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text='🔥 MnlicksTrade + MnlicksMentality 1 месяц', callback_data='month')],
-    [InlineKeyboardButton(text='☘️ MnlicksTrade + MnlicksMentality На FC 27', callback_data='season')],
+    [InlineKeyboardButton(text='Trade + Mentality на всю Fc 27', callback_data='season', icon_custom_emoji_id='5436134080708121013')],
+    [InlineKeyboardButton(text='Trade + Mentality 1 месяц', callback_data='month', icon_custom_emoji_id='5436120989647806298')],
     [InlineKeyboardButton(text='« Назад', callback_data='back')],
 ])
 
